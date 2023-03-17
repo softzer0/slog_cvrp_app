@@ -45,7 +45,17 @@ class Employee(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', onupdate='CASCADE', ondelete='CASCADE'))
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
+    email = db.Column(db.String(128), unique=True)
     work_hours = db.Column(db.Integer, nullable=False)
+
+class Vehicle(db.Model):
+    __tablename__ = 'vehicles'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', onupdate='CASCADE', ondelete='CASCADE'))
+    name = db.Column(db.String(50), nullable=False)
+    reg_plates = db.Column(db.String(15), nullable=False)
+    mileage = db.Column(db.Integer, nullable=False)
 
 class Route(db.Model):
     __tablename__ = 'routes'
@@ -53,6 +63,7 @@ class Route(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', onupdate='CASCADE', ondelete='CASCADE'))
     employee_id = db.Column(db.Integer, db.ForeignKey('employees.id', onupdate='CASCADE', ondelete='SET NULL'))
+    vehicle_id = db.Column(db.Integer, db.ForeignKey('vehicles.id', onupdate='CASCADE', ondelete='SET NULL'))
     done_date = db.Column(db.DateTime)
     link = db.Column(db.String(1500))
     duration = db.Column(db.Integer)
@@ -77,7 +88,7 @@ class Point(db.Model):
     address_id = db.Column(db.Integer, db.ForeignKey('addresses.id', onupdate='CASCADE', ondelete='CASCADE'), nullable=False)
     position = db.Column(db.Integer, nullable=False)
 
-    address = db.relationship('Address')
+    address = db.relationship('Address', foreign_keys=[address_id])
 
     def __init__(self, route_id, address_id, position):
         self.route_id = route_id

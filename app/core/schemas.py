@@ -1,6 +1,6 @@
 from marshmallow import fields, Schema
 
-from .models import Point, Route, Employee, Address
+from .models import Point, Route, Employee, Address, Vehicle
 from ..project.common import DefaultSQLAlchemyAutoSchema
 
 class PaginationSchema(Schema):
@@ -17,6 +17,11 @@ class PaginationSchema(Schema):
 class EmployeeSchema(DefaultSQLAlchemyAutoSchema):
     class Meta:
         model = Employee
+
+class VehicleSchema(DefaultSQLAlchemyAutoSchema):
+    class Meta:
+        model = Vehicle
+
 class AddressSchema(DefaultSQLAlchemyAutoSchema):
     class Meta:
         model = Address

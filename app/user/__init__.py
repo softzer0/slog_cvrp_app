@@ -6,6 +6,8 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
 from .models import User
+from .schemas import UserSchema
+from ..core import get_address_record
 from ..project.common import mail, db
 
 user_bp = Blueprint('user', __name__, template_folder='templates')
@@ -40,7 +42,7 @@ def refresh():
 @jwt_required()
 def me():
     # We can now access our sqlalchemy User object via `current_user`.
-    return {'id': current_user.id, 'email': current_user.email}
+    return UserSchema().dump(current_user)
 
 
 def send_reset_password_mail(email, id):
@@ -107,3 +109,25 @@ def reset_password_send():
         return {'msg': "User with specified e-mail not found"}, 400
     send_reset_password_mail(email, user.id)
     return {'msg': "Reset password mail has been sent"}
+
+@user_bp.route('/settings', methods=['PUT'])
+@jwt_required()
+def update_user_settings():
+    depot_addr_id = request.json.get('depot_addr_id')
+    if isinstance(depot_addr_id, int):
+        current_user.depot_addr_id = get_address_record(depot_addr_id)
+    if 'max_capacity' in request.json:
+        max_capacity = request.json['max_capacity']
+        if max_capacity < 1:
+            return jsonify({'msg': 'Max capacity must be greater than 0'}), 400
+        current_user.max_capacity = max_capacity
+    if 'send_routes_to_employees' in request.json:
+        send_routes_to_employees = request.json['send_routes_to_employees']
+        if not isinstance(send_routes_to_employees, bool):
+            return jsonify({'msg': 'send_routes_to_employees must be a boolean value'}), 400
+        current_user.send_routes_to_employees = send_routes_to_employees
+    try:
+        db.session.commit()
+        return UserSchema().dump(current_user)
+    except Exception as e:
+        return jsonify({'msg': str(e)}), 400

@@ -1,4 +1,5 @@
 from passlib.apps import custom_app_context as pwd_context
+from sqlalchemy import false, true
 
 from ..project.common import db
 
@@ -10,10 +11,13 @@ class User(db.Model):
     email = db.Column(db.String(128), unique=True, nullable=False)
     password_hash = db.Column(db.String(128))
     pass_last_changed = db.Column(db.DateTime)
-    active = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, server_default=false(), nullable=False)
 
-    depot_addr_id = db.Column(db.Integer)
-    max_capacity = db.Column(db.Integer, default=15, nullable=False)
+    depot_addr_id = db.Column(db.Integer, db.ForeignKey('addresses.id', onupdate='CASCADE', ondelete='SET NULL'))
+    max_capacity = db.Column(db.Integer, server_default='15', nullable=False)
+    send_routes_to_employees = db.Column(db.Boolean, server_default=true(), nullable=False)
+
+    depot_addr = db.relationship('Address', foreign_keys=[depot_addr_id])
 
     def hash_password(self, password):
         self.password_hash = pwd_context.encrypt(password)

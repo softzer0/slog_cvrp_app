@@ -23,9 +23,9 @@ def upgrade():
     sa.Column('email', sa.String(length=128), nullable=False),
     sa.Column('password_hash', sa.String(length=128), nullable=True),
     sa.Column('pass_last_changed', sa.DateTime(), nullable=True),
-    sa.Column('active', sa.Boolean(), nullable=False),
+    sa.Column('active', sa.Boolean(), nullable=False, server_default=sa.sql.expression.true()),
     sa.Column('depot_addr_id', sa.Integer(), nullable=True),
-    sa.Column('max_capacity', sa.Integer(), nullable=False),
+    sa.Column('max_capacity', sa.Integer(), nullable=False, server_default='15'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('email')
     )

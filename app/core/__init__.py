@@ -13,8 +13,8 @@ from .common import check_if_import_status, check_if_execution_status, get_execu
 from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP
 from ..project import db
 from ..project.utils import validate_required_fields, get_pagination_info
-from .schemas import RouteSchema, EmployeeSchema, PaginationSchema, AddressSchema
-from .models import Address, Employee, Route, Point
+from .schemas import RouteSchema, EmployeeSchema, PaginationSchema, AddressSchema, VehicleSchema
+from .models import Address, Employee, Route, Point, Vehicle
 
 core_bp = Blueprint('core', __name__)
 
@@ -151,7 +151,8 @@ def get_all_employees():
     sort_by = request.args.get('sort_by', 'id_desc')
     employees = Employee.query.filter_by(user_id=current_user.id)
     if search:
-        employees = employees.filter((Employee.first_name.like(f'%{search}%')) | (Employee.last_name.like(f'%{search}%')))
+        employees = employees.filter((Employee.first_name.like(f'%{search}%')) | (Employee.last_name.like(f'%{search}%'))
+                                     | (Employee.email.like(f'%{search}%')))
     if work_hours_filter:
         employees = employees.filter(Employee.work_hours >= work_hours_filter)
     if 'id' in sort_by:
@@ -215,6 +216,73 @@ def delete_employee(employee_id):
     db.session.commit()
     return jsonify({'msg': "Employee deleted successfully"})
 
+@core_bp.route('/vehicles', methods=['GET'])
+@jwt_required()
+def get_all_vehicles():
+    page, per_page = get_pagination_info(request)
+    search = request.args.get('search')
+    sort_by = request.args.get('sort_by', 'id_desc')
+    vehicles = Vehicle.query.filter_by(user_id=current_user.id)
+    if search:
+        vehicles = vehicles.filter(Vehicle.name.like(f'%{search}%') | Vehicle.reg_plates.like(f'%{search}%'))
+    if 'id' in sort_by:
+        id_order = 'asc' if 'id_asc' in sort_by else 'desc'
+        vehicles = vehicles.order_by(Vehicle.id.asc() if id_order == 'asc' else Vehicle.id.desc())
+    if 'mileage' in sort_by:
+        mileage_order = 'asc' if 'mileage_asc' in sort_by else 'desc'
+        vehicles = vehicles.order_by(Vehicle.mileage.asc() if mileage_order == 'asc' else Vehicle.mileage.desc())
+    vehicles = vehicles.paginate(page=page, per_page=per_page)
+    return PaginationSchema(VehicleSchema).dump(vehicles)
+
+@core_bp.route('/vehicles', methods=['POST'])
+@jwt_required()
+@validate_required_fields('name', 'reg_plates', 'mileage')
+def create_vehicle():
+    try:
+        vehicle = Vehicle(
+            user_id=current_user.id,
+            name=request.json['name'],
+            reg_plates=request.json['reg_plates'],
+            mileage=request.json['mileage']
+        )
+        db.session.add(vehicle)
+        db.session.commit()
+        return VehicleSchema().dump(vehicle), 201
+    except ValueError as e:
+        return jsonify({'msg': str(e)}), 400
+
+def get_vehicle_record(vehicle_id):
+    vehicle = get_record_by_id(current_user.id, Vehicle, vehicle_id)
+    if not vehicle:
+        abort(make_response(jsonify(msg="Vehicle not found"), 404))
+    return vehicle
+
+@core_bp.route('/vehicles/<int:vehicle_id>', methods=['GET'])
+@jwt_required()
+def get_vehicle(vehicle_id):
+    vehicle = get_vehicle_record(vehicle_id)
+    return VehicleSchema().dump(vehicle)
+
+@core_bp.route('/vehicles/<int:vehicle_id>', methods=['PUT'])
+@jwt_required()
+def update_vehicle(vehicle_id):
+    vehicle = get_vehicle_record(vehicle_id)
+    for field in ('name', 'reg_plates', 'mileage'):
+        if field in request.json:
+            setattr(vehicle, field, request.json[field])
+    try:
+        db.session.commit()
+    except Exception as e:
+        return jsonify({'msg': str(e)}), 400
+    return VehicleSchema().dump(vehicle)
+
+@core_bp.route('/vehicles/<int:vehicle_id>', methods=['DELETE'])
+@jwt_required()
+def delete_vehicle(vehicle_id):
+    vehicle = get_vehicle_record(vehicle_id)
+    db.session.delete(vehicle)
+    db.session.commit()
+    return jsonify({'msg': "Vehicle deleted successfully"})
 
 def get_employee_id_if_exists(request):
     employee_id = request.args.get('employee_id', type=int) if request.method == 'GET' else request.json.get('employee_id')
@@ -224,21 +292,32 @@ def get_employee_id_if_exists(request):
             abort(make_response(jsonify(msg="Employee not found"), 404))
     return employee_id
 
+def get_vehicle_id_if_exists(request):
+    vehicle_id = request.args.get('vehicle_id', type=int) if request.method == 'GET' else request.json.get('vehicle_id')
+    if vehicle_id:
+        vehicle_exists = db.session.query(Employee.query.filter_by(user_id=current_user.id, id=vehicle_id).exists()).scalar()
+        if not vehicle_exists:
+            abort(make_response(jsonify(msg="Vehicle not found"), 404))
+    return vehicle_id
+
 @core_bp.route('/routes', methods=['GET'])
 @jwt_required()
 def get_all_routes():
     page, per_page = get_pagination_info(request)
-    start_time = request.args.get('start_time')
-    end_time = request.args.get('end_time')
+    from_done_time = request.args.get('from_done_time')
+    to_done_time = request.args.get('to_done_time')
     sort_by = request.args.get('sort_by', 'id_desc')
     routes = Route.query.filter_by(user_id=current_user.id)
     employee_id = get_employee_id_if_exists(request)
+    vehicle_id = get_vehicle_id_if_exists(request)
     if employee_id:
         routes = routes.filter_by(employee_id=employee_id)
-    if start_time:
-        routes = routes.filter(Route.done_date >= parse(start_time))
-    if end_time:
-        routes = routes.filter(Route.done_date <= parse(end_time))
+    if vehicle_id:
+        routes = routes.filter_by(vehicle_id=vehicle_id)
+    if from_done_time:
+        routes = routes.filter(Route.done_date >= parse(from_done_time))
+    if to_done_time:
+        routes = routes.filter(Route.done_date <= parse(to_done_time))
     if 'id' in sort_by:
         id_order = 'asc' if 'id_asc' in sort_by else 'desc'
         routes = routes.order_by(Route.id.asc() if id_order == 'asc' else Route.id.desc())
@@ -255,5 +334,6 @@ def update_route(route_id):
     if not route:
         return jsonify({'msg': "Route not found"}), 404
     route.employee_id = get_employee_id_if_exists(request)
+    route.vehicle_id = get_vehicle_id_if_exists(request)
     db.session.commit()
     return RouteSchema().dump(route)
