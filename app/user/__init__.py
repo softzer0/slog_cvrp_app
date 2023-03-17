@@ -2,12 +2,13 @@ from flask import request, Blueprint, current_app, render_template, make_respons
 from flask_jwt_extended import create_access_token, jwt_required, current_user, create_refresh_token, get_jwt_identity
 from flask_mail import Message
 from itsdangerous import TimestampSigner
+from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
 from .models import User
 from .schemas import UserSchema
-from ..core import get_address_record
+from ..core.models import Address, Point
 from ..project.common import mail, db
 
 user_bp = Blueprint('user', __name__, template_folder='templates')
@@ -115,7 +116,9 @@ def reset_password_send():
 def update_user_settings():
     depot_addr_id = request.json.get('depot_addr_id')
     if isinstance(depot_addr_id, int):
-        current_user.depot_addr_id = get_address_record(depot_addr_id)
+        if not db.session.query(exists(select(Address.id).outerjoin(Point)).where((Address.user_id == current_user.id) & (Address.id == depot_addr_id) & (Point.id == None))).scalar():
+            return jsonify({'msg': "Address not found"}), 404
+        current_user.depot_addr_id = depot_addr_id
     if 'max_capacity' in request.json:
         max_capacity = request.json['max_capacity']
         if max_capacity < 1:

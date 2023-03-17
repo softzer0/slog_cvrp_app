@@ -54,7 +54,7 @@ class Vehicle(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', onupdate='CASCADE', ondelete='CASCADE'))
     name = db.Column(db.String(50), nullable=False)
-    reg_plates = db.Column(db.String(15), nullable=False)
+    reg_plates = db.Column(db.String(15), unique=True, nullable=False)
     mileage = db.Column(db.Integer, nullable=False)
 
 class Route(db.Model):

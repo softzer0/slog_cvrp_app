@@ -31,9 +31,5 @@ def check_if_import_status(user_id, status):
 def check_if_execution_status(user_id, status):
     return _check_if_status(get_execution_key(user_id), status)
 
-def get_record_by_id(user_id, model, id):
-    return model.query.filter_by(user_id=user_id, id=id).first()
-
 def get_unassigned_addresses(user_id):
     return Address.query.outerjoin(Point).filter((Address.user_id == user_id) & (Point.address_id.is_(None)))
-

@@ -13,7 +13,7 @@ class User(db.Model):
     pass_last_changed = db.Column(db.DateTime)
     active = db.Column(db.Boolean, server_default=false(), nullable=False)
 
-    depot_addr_id = db.Column(db.Integer, db.ForeignKey('addresses.id', onupdate='CASCADE', ondelete='SET NULL'))
+    depot_addr_id = db.Column(db.Integer, db.ForeignKey('addresses.id', use_alter=True, onupdate='CASCADE', ondelete='SET NULL', name='user_address_fk'))
     max_capacity = db.Column(db.Integer, server_default='15', nullable=False)
     send_routes_to_employees = db.Column(db.Boolean, server_default=true(), nullable=False)
 
