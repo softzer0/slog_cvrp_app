@@ -128,4 +128,7 @@ register_crud_routes(
     filter_fields=['employee_id', 'vehicle_id'],
     sort_fields=['id', 'done_date'],
     custom_filters=[date_range_filter],
+    field_parsers={
+        'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None),
+    }
 )

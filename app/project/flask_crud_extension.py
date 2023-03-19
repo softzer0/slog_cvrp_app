@@ -20,7 +20,7 @@ class PaginationSchema(Schema):
 
 class CRUDView(MethodView):
     def __init__(self, model, schema, editable_fields=None, required_fields=None, query=None, search_fields=None,
-                 filter_fields=None, sort_fields=None, custom_filters=None, custom_create_func=None,
+                 filter_fields=None, sort_fields=None, field_parsers=None, custom_filters=None, custom_create_func=None,
                  pagination_schema=PaginationSchema):
         self.model = model
         self.schema = schema
@@ -31,6 +31,7 @@ class CRUDView(MethodView):
         self.search_fields = search_fields
         self.filter_fields = self._get_fields_as_dict(filter_fields) if filter_fields else None
         self.sort_fields = self._get_fields_as_dict(sort_fields) if sort_fields else None
+        self.field_parsers = field_parsers or {}
         self.custom_filters = custom_filters or []
         self.custom_create_func = custom_create_func
         self.pagination_schema = pagination_schema
@@ -97,6 +98,21 @@ class CRUDView(MethodView):
             query = custom_filter(query)
         return query
 
+    def parse_and_validate_data(self, data):
+        parsed_data = {}
+        for field, value in data.items():
+            if field in self.field_parsers:
+                parsed_data[field] = self.field_parsers[field](value)
+            else:
+                parsed_data[field] = value
+
+            # Check if the type matches the model
+            model_field_type = type(getattr(self.model, field).type)
+            if not isinstance(parsed_data[field], model_field_type.python_type):
+                abort(make_response(jsonify(msg=f"Invalid type for field '{field}'"), 400))
+
+        return parsed_data
+
     @jwt_required()
     def get(self, record_id=None):
         if record_id is not None:
@@ -123,6 +139,7 @@ class CRUDView(MethodView):
         data = request.get_json()
         data = {field: data[field] for field in self._all_fields if field in data}
         self.validate_required_fields(data)
+        data = self.parse_and_validate_data(data)
 
         try:
             if not self.custom_create_func:
@@ -139,6 +156,7 @@ class CRUDView(MethodView):
     def put(self, record_id):
         data = request.get_json()
         record = self.get_record_by_id(record_id)
+        data = self.parse_and_validate_data(data)
         for field in self.editable_fields:
             if field in data:
                 setattr(record, field, data[field])
@@ -157,8 +175,8 @@ class CRUDView(MethodView):
 
 
 def register_crud_routes(app, model, schema, editable_fields=None, required_fields=None, query=None, search_fields=None,
-                         filter_fields=None, sort_fields=None, custom_filters=None, custom_create_func=None,
-                         url_prefix=None, blueprint=None):
+                         filter_fields=None, sort_fields=None, field_parsers=None, custom_filters=None,
+                         custom_create_func=None, url_prefix=None, blueprint=None):
     if blueprint:
         bp = Blueprint(blueprint, __name__)
     else:
@@ -174,6 +192,7 @@ def register_crud_routes(app, model, schema, editable_fields=None, required_fiel
         search_fields=search_fields,
         filter_fields=filter_fields,
         sort_fields=sort_fields,
+        field_parsers=field_parsers,
         custom_filters=custom_filters,
         custom_create_func=custom_create_func
     )
