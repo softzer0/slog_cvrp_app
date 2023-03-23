@@ -111,6 +111,7 @@ def reset_password_send():
     send_reset_password_mail(email, user.id)
     return {'msg': "Reset password mail has been sent"}
 
+
 @user_bp.route('/settings', methods=['PUT'])
 @jwt_required()
 def update_user_settings():

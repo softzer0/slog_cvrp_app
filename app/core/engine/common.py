@@ -2,7 +2,6 @@ import numpy as np
 
 from ..common import get_unassigned_addresses
 
-
 def prepare_w_matrix(user_id, depot_addr_id):
     addresses = get_unassigned_addresses(user_id).all()
     coords = []

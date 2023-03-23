@@ -1,10 +1,22 @@
+import datetime
+
 from flask import request, jsonify, abort, make_response, Blueprint, current_app
 from flask.views import MethodView
 from flask_jwt_extended import current_user, jwt_required
 from marshmallow import Schema, fields
-from sqlalchemy import inspect, or_
+from sqlalchemy import inspect, or_, bindparam, String, Integer, Float, Boolean, DateTime, Date
 
 from app.project import db
+
+
+type_mapping = {
+    String: str,
+    Integer: int,
+    Float: float,
+    Boolean: bool,
+    DateTime: datetime.datetime,
+    Date: datetime.date,
+}
 
 
 class PaginationSchema(Schema):
@@ -53,7 +65,7 @@ class CRUDView(MethodView):
         return required_fields
 
     def get_record_by_id(self, record_id):
-        record = self.query.filter_by(id=record_id).first()
+        record = self.query.filter(self.model.id == record_id).first()
         if not record:
             abort(make_response(jsonify(msg="Record not found"), 404))
         return record
@@ -72,7 +84,7 @@ class CRUDView(MethodView):
     def apply_search_filters(self, query):
         search = request.args.get('search')
         if search:
-            filters = [getattr(self.model, field).like(f'%{search}%') for field in self.search_fields]
+            filters = [getattr(self.model, field).like(bindparam('search')).params(search=f'%{search}%') for field in self.search_fields]
             query = query.filter(or_(*filters))
         return query
 
@@ -102,13 +114,26 @@ class CRUDView(MethodView):
         parsed_data = {}
         for field, value in data.items():
             if field in self.field_parsers:
-                parsed_data[field] = self.field_parsers[field](value)
+                try:
+                    parsed_data[field] = self.field_parsers[field](value)
+                except Exception as e:
+                    abort(make_response(jsonify(msg=str(e)), 400))
             else:
                 parsed_data[field] = value
 
-            # Check if the type matches the model
-            model_field_type = type(getattr(self.model, field).type)
-            if not isinstance(parsed_data[field], model_field_type.python_type):
+            model_field_type = getattr(self.model, field).type
+
+            # Find the corresponding Python type for the model field type
+            python_type = None
+            for sqlalchemy_type, py_type in type_mapping.items():
+                if isinstance(model_field_type, sqlalchemy_type):
+                    python_type = py_type
+                    break
+
+            if python_type is None:
+                abort(make_response(jsonify(msg=f"Type mapping not found for field '{field}'"), 400))
+
+            if not isinstance(parsed_data[field], python_type):
                 abort(make_response(jsonify(msg=f"Invalid type for field '{field}'"), 400))
 
         return parsed_data
