@@ -5,8 +5,10 @@ from flask.views import MethodView
 from flask_jwt_extended import current_user, jwt_required
 from marshmallow import Schema, fields
 from sqlalchemy import inspect, or_, bindparam, String, Integer, Float, Boolean, DateTime, Date
+from sqlalchemy.orm import make_transient
+from sqlalchemy.orm.exc import StaleDataError
 
-from app.project import db
+from . import db
 
 
 type_mapping = {
@@ -143,7 +145,10 @@ class CRUDView(MethodView):
         if record_id is not None:
             # Get single record
             record = self.get_record_by_id(record_id)
-            return self.schema().dump(record)
+            self.before_get_single(record)
+            response = self.schema().dump(record)
+            self.after_get_single(record)
+            return response
         else:
             # Get paginated list of records
             page, per_page = self.get_pagination_info()
@@ -156,8 +161,11 @@ class CRUDView(MethodView):
                 query = self.apply_custom_filters(query)
             if self.sort_fields:
                 query = self.apply_sorting(query)
+            self.before_get_paginated(query)
             records = query.paginate(page=page, per_page=per_page)
-            return self.pagination_schema(self.schema).dump(records)
+            response = self.pagination_schema(self.schema).dump(records)
+            self.after_get_paginated(records)
+            return response
 
     @jwt_required()
     def post(self):
@@ -167,60 +175,125 @@ class CRUDView(MethodView):
         data = self.parse_and_validate_data(data)
 
         try:
+            self.before_create(data)
             if not self.custom_create_func:
                 record = self.model(user_id=current_user.id, **data)
                 db.session.add(record)
                 db.session.commit()
             else:
                 record = self.custom_create_func(**data)
+            self.after_create(record)
             return self.schema().dump(record), 201
         except Exception as e:
             return jsonify({'msg': str(e)}), 400
+
+    def _perform_before_update(self, record, data):
+        # Create a new SQLAlchemy object that is a copy of the original record
+        original_record = db.session.merge(record, load=False)
+        make_transient(original_record)
+
+        self.before_update(record, data)
+        return original_record
 
     @jwt_required()
     def put(self, record_id):
         data = request.get_json()
         record = self.get_record_by_id(record_id)
         data = self.parse_and_validate_data(data)
+        original_record = self._perform_before_update(record, data)
         for field in self.editable_fields:
             if field in data:
                 setattr(record, field, data[field])
-        try:
-            db.session.commit()
+        while True:
+            try:
+                self.after_update(record, original_record)
+                db.session.commit()
+                break
+            except StaleDataError:
+                # In case of a conflict, reload the records and retry the update
+                db.session.rollback()
+                db.session.refresh(record)
+                db.session.refresh(original_record)
+            except Exception as e:
+                return jsonify({'msg': str(e)}), 400
             return self.schema().dump(record)
-        except Exception as e:
-            return jsonify({'msg': str(e)}), 400
 
     @jwt_required()
     def delete(self, record_id):
         record = self.get_record_by_id(record_id)
+        self.before_delete(record)
         db.session.delete(record)
         db.session.commit()
+        self.after_delete(record)
         return jsonify({'msg': f"{self.model.__name__} deleted successfully"})
 
+    def before_request(self, *args, **kwargs):
+        pass
 
-def register_crud_routes(app, model, schema, editable_fields=None, required_fields=None, query=None, search_fields=None,
-                         filter_fields=None, sort_fields=None, field_parsers=None, custom_filters=None,
-                         custom_create_func=None, url_prefix=None, blueprint=None):
+    def after_request(self, response, *args, **kwargs):
+        return response
+
+    def dispatch_request(self, *args, **kwargs):
+        self.before_request(*args, **kwargs)
+        response = super().dispatch_request(**kwargs)
+        return self.after_request(response, *args, **kwargs)
+
+    def before_create(self, data):
+        pass
+
+    def after_create(self, record):
+        pass
+
+    def before_update(self, record, data):
+        pass
+
+    def after_update(self, record, original_record):
+        pass
+
+    def before_delete(self, record):
+        pass
+
+    def after_delete(self, record):
+        pass
+
+    def before_get_single(self, record):
+        pass
+
+    def after_get_single(self, record):
+        pass
+
+    def before_get_paginated(self, query):
+        pass
+
+    def after_get_paginated(self, records):
+        pass
+
+
+def register_crud_routes(app, model=None, view_class=None, schema=None, editable_fields=None, required_fields=None,
+                         query=None, search_fields=None, filter_fields=None, sort_fields=None, field_parsers=None,
+                         custom_filters=None, custom_create_func=None, url_prefix=None, blueprint=None):
     if blueprint:
         bp = Blueprint(blueprint, __name__)
     else:
         bp = app
 
-    view = CRUDView.as_view(
-        model.__tablename__,
-        model=model,
-        schema=schema,
-        editable_fields=editable_fields,
-        required_fields=required_fields,
-        query=query,
-        search_fields=search_fields,
-        filter_fields=filter_fields,
-        sort_fields=sort_fields,
-        field_parsers=field_parsers,
-        custom_filters=custom_filters,
-        custom_create_func=custom_create_func
-    )
+    if view_class:
+        view = view_class.as_view(view_class.__name__.lower())
+    else:
+        view = CRUDView.as_view(
+            model.__tablename__,
+            model,
+            schema,
+            editable_fields=editable_fields,
+            required_fields=required_fields,
+            query=query,
+            search_fields=search_fields,
+            filter_fields=filter_fields,
+            sort_fields=sort_fields,
+            field_parsers=field_parsers,
+            custom_filters=custom_filters,
+            custom_create_func=custom_create_func
+        )
 
     prefix = url_prefix or f'/{model.__tablename__.lower()}'
     bp.add_url_rule(f'{prefix}', view_func=view, methods=['GET', 'POST'])

@@ -6,11 +6,11 @@ from dateutil.parser import parse
 from flask import Blueprint, request, make_response, jsonify, abort
 from flask_jwt_extended import jwt_required, current_user
 
-from app.project import redis_client
+from ..project import redis_client, db
 from .common import check_if_import_status, check_if_execution_status, get_execution_key, create_status_object, \
     save_import_status, save_execution_status, get_unassigned_addresses
 from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP
-from ..project.flask_crud_extension import register_crud_routes
+from ..project.flask_crud_extension import register_crud_routes, CRUDView
 from .schemas import RouteSchema, EmployeeSchema, AddressSchema, VehicleSchema
 from .models import Address, Employee, Route, Point, Vehicle
 
@@ -74,20 +74,6 @@ def check_execution():
     return check_task_status(check_if_execution_status, get_execution_key)
 
 
-def date_range_filter(query):
-    from_done_time = request.args.get('from_done_time')
-    to_done_time = request.args.get('to_done_time')
-
-    if from_done_time and to_done_time:
-        try:
-            query = query.filter(
-                (Route.done_date >= parse(from_done_time)) &
-                (Route.done_date <= parse(to_done_time))
-            )
-        except ValueError as e:
-            abort(make_response(jsonify(msg=str(e)), 400))
-    return query
-
 register_crud_routes(
     core_bp,
     model=Address,
@@ -120,15 +106,59 @@ register_crud_routes(
     sort_fields=['id', 'mileage'],
 )
 
-register_crud_routes(
-    core_bp,
-    model=Route,
-    schema=RouteSchema,
-    editable_fields=['employee_id', 'vehicle_id', 'done_date'],
-    filter_fields=['employee_id', 'vehicle_id'],
-    sort_fields=['id', 'done_date'],
-    custom_filters=[date_range_filter],
-    field_parsers={
-        'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None),
-    }
-)
+def date_range_filter(query):
+    from_done_time = request.args.get('from_done_time')
+    to_done_time = request.args.get('to_done_time')
+
+    if from_done_time and to_done_time:
+        try:
+            query = query.filter(
+                (Route.done_date >= parse(from_done_time)) &
+                (Route.done_date <= parse(to_done_time))
+            )
+        except ValueError as e:
+            abort(make_response(jsonify(msg=str(e)), 400))
+    return query
+
+class RouteCRUDView(CRUDView):
+    def __init__(self):
+        super().__init__(
+            Route,
+            RouteSchema,
+            editable_fields=['employee_id', 'vehicle_id', 'done_date'],
+            filter_fields=['employee_id', 'vehicle_id'],
+            sort_fields=['id', 'done_date'],
+            custom_filters=[date_range_filter],
+            field_parsers={
+                'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None),
+            }
+        )
+
+    def after_update(self, record, original_record):
+        if record.employee_id != original_record.employee_id:
+            if record.employee_id:
+                new_employee = Employee.query.filter_by(user_id=current_user.id, id=record.employee_id).first()
+                if new_employee:
+                    new_employee.work_hours += round(record.duration / 3600)
+                    new_employee.version += 1
+
+            if original_record.employee_id:
+                old_employee = Employee.query.filter_by(id=original_record.employee_id).first()
+                if old_employee:
+                    old_employee.work_hours -= round(original_record.duration / 3600)
+                    old_employee.version += 1
+
+        if record.vehicle_id != original_record.vehicle_id:
+            if record.vehicle_id:
+                new_vehicle = Vehicle.query.filter_by(user_id=current_user.id, id=record.vehicle_id).first()
+                if new_vehicle:
+                    new_vehicle.mileage += record.distance
+                    new_vehicle.version += 1
+
+            if original_record.vehicle_id:
+                old_vehicle = Vehicle.query.filter_by(id=original_record.vehicle_id).first()
+                if old_vehicle:
+                    old_vehicle.mileage -= original_record.distance
+                    old_vehicle.version += 1
+
+register_crud_routes(core_bp, model=Route, view_class=RouteCRUDView)
