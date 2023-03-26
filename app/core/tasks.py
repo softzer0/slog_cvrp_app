@@ -4,8 +4,9 @@ from os import environ
 from requests import get as requests_get
 
 from .common import save_import_status, save_execution_status
-from .engine.common import prepare_w_matrix
+from .engine.common import prepare_w_matrix, get_depot_and_genes
 from .engine.cvrp import CVRP
+from .engine.tabu import Tabu
 from ..project.common import db, celery
 from .models import Address, Route, Point
 
@@ -51,29 +52,42 @@ def add_new_route(user_id, points, nodes, link, duration, distance):
         point = Point(route.id, nodes[p][0], i+1)
         db.session.add(point)
 
+def create_link_and_add_route(user_id, res, coords, nodes):
+    coordinates_string = ''
+    link = 'https://s-log-directions.vercel.app/?depot='
+    for i, p in enumerate(res):
+        coords_txt = f'{coords[p][0]},{coords[p][1]}'
+        coordinates_string += ';' + coords_txt
+        if i < len(res) - 1:
+            if i > 0:
+                link += f'&point_{i}='
+            link += coords_txt
+            if i > 0:
+                link += f',{nodes[p][1]}'
+    response = requests_get('https://api.mapbox.com/directions/v5/mapbox/driving/' + coordinates_string[1:] + '?access_token=' + MAPBOX_API_KEY).json()
+    r = response['routes'][0]
+    add_new_route(user_id, res, nodes, link, r['duration'], r['distance'] / 1000)
+
 VRP_INSTANCES = 2
 @celery.task()
 def prepare_and_run_VRP(user_id, depot_addr_id, max_capacity):
     try:
         coords, matrix, nodes = prepare_w_matrix(user_id, depot_addr_id)
+        results = CVRP(max_capacity, matrix, nodes).start(VRP_INSTANCES)
+        for res in results:
+            create_link_and_add_route(user_id, res, coords, nodes)
+        db.session.commit()
+        save_execution_status(user_id, TaskStatus.DONE)
     except Exception as e:
         save_execution_status(user_id, TaskStatus.ERROR, {'msg': str(e)})
-        return
-    results = CVRP(max_capacity, matrix, nodes).start(VRP_INSTANCES)
-    for res in results:
-        coordinates_string = ''
-        link = 'https://s-log-directions.vercel.app/?depot='
-        for i, p in enumerate(res):
-            coords_txt = f'{coords[p][0]},{coords[p][1]}'
-            coordinates_string += ';' + coords_txt
-            if i < len(res) - 1:
-                if i > 0:
-                    link += f'&point_{i}='
-                link += coords_txt
-                if i > 0:
-                    link += f',{nodes[p][1]}'
-        response = requests_get('https://api.mapbox.com/directions/v5/mapbox/driving/' + coordinates_string[1:] + '?access_token=' + MAPBOX_API_KEY).json()
-        r = response['routes'][0]
-        add_new_route(user_id, res, nodes, link, r['duration'], r['distance'] / 1000)
-    db.session.commit()
-    save_execution_status(user_id, TaskStatus.DONE)
+
+@celery.task()
+def prepare_and_run_TSP(user_id, depot_addr_id):
+    try:
+        coords, matrix, nodes = prepare_w_matrix(user_id, depot_addr_id)
+        depot, genes = get_depot_and_genes(nodes)
+        create_link_and_add_route(user_id, Tabu(matrix, depot).execute(genes, 1000), nodes, coords)
+        db.session.commit()
+        save_execution_status(user_id, TaskStatus.DONE)
+    except Exception as e:
+        save_execution_status(user_id, TaskStatus.ERROR, {'msg': str(e)})

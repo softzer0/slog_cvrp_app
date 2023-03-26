@@ -9,10 +9,11 @@ from flask_jwt_extended import jwt_required, current_user
 from ..project import redis_client, db
 from .common import check_if_import_status, check_if_execution_status, get_execution_key, create_status_object, \
     save_import_status, save_execution_status, get_unassigned_addresses
-from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP
+from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP, prepare_and_run_TSP
 from ..project.flask_crud_extension import register_crud_routes, CRUDView
 from .schemas import RouteSchema, EmployeeSchema, AddressSchema, VehicleSchema
 from .models import Address, Employee, Route, Point, Vehicle
+from ..project.utils import get_bool_request_arg
 
 core_bp = Blueprint('core', __name__)
 
@@ -63,8 +64,11 @@ def check_import():
 def start_algorithm():
     depot_addr_id = request.args.get('depot_addr_id', current_user.depot_addr_id, int)
     if not depot_addr_id:
-        return jsonify({'msg': "No valid depot address ID provided. Can be either a query parameter 'depot_addr_id', or can be set on the user level"}), 400
-    prepare_and_run_VRP.delay(current_user.id, depot_addr_id, current_user.max_capacity)
+        return jsonify({'msg': "No valid depot address ID provided - can be either a query parameter 'depot_addr_id', or can be set on the user level"}), 400
+    if get_bool_request_arg(request, 'use_tsp'):
+        prepare_and_run_TSP.delay(current_user.id, depot_addr_id)
+    else:
+        prepare_and_run_VRP.delay(current_user.id, depot_addr_id, current_user.max_capacity)
     save_execution_status(current_user.id, TaskStatus.IN_PROGRESS)
     return {'msg': "Algorithm execution has begun, please periodically query /get-execution-state to check the status"}
 

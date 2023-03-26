@@ -2,6 +2,7 @@ import random
 from time import time
 import numpy as np
 
+from .common import get_depot_and_genes
 from .tabu import Tabu
 
 
@@ -23,51 +24,44 @@ class CVRP:
         self.max_capacity = max_capacity
         self.matrix = matrix
         self.nodes = nodes
-        self.depot = (len(nodes)-1, 0)
+        self.depot, self.genes = get_depot_and_genes(self.nodes)
         self.tabu = Tabu(matrix, self.depot)
 
-    class Problem_Genetic:
-        def __init__(self, parent, genes, fitness, decode):
-            self.parent = parent
-            self.genes = genes
-            self.fitness = fitness
-            self.decode = decode
+    def crossover(self, parent1, parent2):
+        def process_gen_repeated(copy_child1, copy_child2):
+            count1 = 0
+            for gen1 in copy_child1[:pos]:
+                repeat = copy_child1.count(gen1)
+                if repeat > 1 and gen1[0] == self.depot[0]:
+                    repeat = 0
+                if repeat > 1:  # If need to fix repeated gen
+                    count2 = 0
+                    for gen2 in parent1[pos:]:  # Choose next available gen
+                        if gen2 not in copy_child1:
+                            child1[count1] = parent1[pos:][count2]
+                        count2 += 1
+                count1 += 1
 
-        def crossover(self, parent1, parent2):
-            def process_gen_repeated(copy_child1, copy_child2):
-                count1 = 0
-                for gen1 in copy_child1[:pos]:
-                    repeat = copy_child1.count(gen1)
-                    if repeat > 1 and gen1[0] == self.parent.depot[0]:
-                        repeat = 0
-                    if repeat > 1:  # If need to fix repeated gen
-                        count2 = 0
-                        for gen2 in parent1[pos:]:  # Choose next available gen
-                            if gen2 not in copy_child1:
-                                child1[count1] = parent1[pos:][count2]
-                            count2 += 1
-                    count1 += 1
+            count1 = 0
+            for gen1 in copy_child2[:pos]:
+                repeat = copy_child2.count(gen1)
+                if repeat > 1 and gen1[0] == self.depot[0]:
+                    repeat = 0
+                if repeat > 1:  # If need to fix repeated gen
+                    count2 = 0
+                    for gen2 in parent2[pos:]:  # Choose next available gen
+                        if gen2 not in copy_child2:
+                            child2[count1] = parent2[pos:][count2]
+                        count2 += 1
+                count1 += 1
 
-                count1 = 0
-                for gen1 in copy_child2[:pos]:
-                    repeat = copy_child2.count(gen1)
-                    if repeat > 1 and gen1[0] == self.parent.depot[0]:
-                        repeat = 0
-                    if repeat > 1:  # If need to fix repeated gen
-                        count2 = 0
-                        for gen2 in parent2[pos:]:  # Choose next available gen
-                            if gen2 not in copy_child2:
-                                child2[count1] = parent2[pos:][count2]
-                            count2 += 1
-                    count1 += 1
+            return [[child1, np.inf], [child2, np.inf]]
 
-                return [[child1, np.inf], [child2, np.inf]]
+        pos = random.randrange(1, len(self.nodes))
+        child1 = parent1[:pos] + parent2[pos:]
+        child2 = parent2[:pos] + parent1[pos:]
 
-            pos = random.randrange(1, len(self.parent.nodes))
-            child1 = parent1[:pos] + parent2[pos:]
-            child2 = parent2[:pos] + parent1[pos:]
-
-            return process_gen_repeated(child1, child2)
+        return process_gen_repeated(child1, child2)
 
     def fitnessVRP(self, chromosome):
         new_chromosome = []
@@ -123,48 +117,47 @@ class CVRP:
     # =====================================================================================================================================
 
 
-    def genetic_algorithm_t(self, Problem_Genetic, k, opt, ngen, size, ratio_cross):  # , prob_mutate
-        def initial_population(Problem_Genetic, size):
+    def genetic_algorithm_t(self, k, opt, ngen, size, ratio_cross):  # , prob_mutate
+        def initial_population(size):
             def generate_chromosome():
-                chromosome_copy = Problem_Genetic.genes.copy()
+                chromosome_copy = self.genes.copy()
                 random.shuffle(chromosome_copy)
                 return chromosome_copy
 
             return [[generate_chromosome(), np.inf] for _ in range(size)]
 
-        def new_generation_t(Problem_Genetic, k, opt, population, n_parents, n_directs):  # , prob_mutate
-            def tournament_selection(Problem_Genetic, population, n, k, opt):
+        def new_generation_t(k, opt, population, n_parents, n_directs):  # , prob_mutate
+            def tournament_selection(population, n, k, opt):
                 winners = []
                 for _ in range(n):
                     elements = random.sample(population, k)
-                    winners.append(opt(elements, key=Problem_Genetic.fitness))
+                    winners.append(opt(elements, key=self.fitnessVRP))
                 return winners
 
-            def cross_parents(Problem_Genetic, parents):
+            def cross_parents(parents):
                 childs = []
                 for i in range(0, len(parents), 2):
-                    childs.extend(Problem_Genetic.crossover(parents[i][0], parents[i + 1][0]))
+                    childs.extend(self.crossover(parents[i][0], parents[i + 1][0]))
                 return childs
 
-            directs = tournament_selection(Problem_Genetic, population, n_directs, k, opt)
-            crosses = cross_parents(Problem_Genetic,
-                                    tournament_selection(Problem_Genetic, population, n_parents, k, opt))
+            directs = tournament_selection(population, n_directs, k, opt)
+            crosses = cross_parents(tournament_selection(population, n_parents, k, opt))
             # mutations = mutate(Problem_Genetic, crosses, prob_mutate)
             new_generation = directs + crosses  # + mutations
 
             return new_generation
 
-        population = initial_population(Problem_Genetic, size)
+        population = initial_population(size)
         n_parents = round(size * ratio_cross)
         n_parents = (n_parents if n_parents % 2 == 0 else n_parents - 1)
         n_directs = size - n_parents
 
         for _ in range(ngen):
-            population = new_generation_t(Problem_Genetic, k, opt, population, n_parents, n_directs)  # , prob_mutate
+            population = new_generation_t(k, opt, population, n_parents, n_directs)  # , prob_mutate
 
-        bestChromosome = opt(population, key=Problem_Genetic.fitness)
+        bestChromosome = opt(population, key=self.fitnessVRP)
         print(f'Chromosome: {bestChromosome}')
-        genotype = Problem_Genetic.decode(bestChromosome)
+        genotype = self.decodeVRP(bestChromosome)
         # print(f'Solution: {genotype[0]}')
 
         return bestChromosome, genotype
@@ -178,12 +171,10 @@ class CVRP:
 
     def start(self, k):
         print(f'Executing {k} VRP instances...')
-        genes = [(i, int(self.nodes[i][1])) for i in range(len(self.nodes)-1)]
-        VRP_PROBLEM = self.Problem_Genetic(self, genes, self.fitnessVRP, self.decodeVRP)
         tiempo_inicial_t2 = time()
         genotypes = {}
         for _ in range(k):
-            result = self.genetic_algorithm_t(VRP_PROBLEM, 2, min, 200, 100, 0.85)
+            result = self.genetic_algorithm_t(2, min, 200, 100, 0.85)
             genotypes[result[0][1]] = (result[0], result[1])
 
         best = min(list(genotypes.keys()))

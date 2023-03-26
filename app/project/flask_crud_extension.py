@@ -1,10 +1,10 @@
 import datetime
 
-from flask import request, jsonify, abort, make_response, Blueprint, current_app
+from flask import request, jsonify, make_response, Blueprint, current_app
 from flask.views import MethodView
 from flask_jwt_extended import current_user, jwt_required
 from marshmallow import Schema, fields
-from sqlalchemy import inspect, or_, bindparam, String, Integer, Float, Boolean, DateTime, Date
+from sqlalchemy import inspect, or_, String, Integer, Float, Boolean, DateTime, Date
 from sqlalchemy.orm import make_transient
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -19,6 +19,16 @@ type_mapping = {
     DateTime: datetime.datetime,
     Date: datetime.date,
 }
+
+
+class CRUDError(Exception):
+    def __init__(self, message, status_code):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+    def to_response(self):
+        return make_response(jsonify(msg=self.message), self.status_code)
 
 
 class PaginationSchema(Schema):
@@ -69,14 +79,14 @@ class CRUDView(MethodView):
     def get_record_by_id(self, record_id):
         record = self.query.filter(self.model.id == record_id).first()
         if not record:
-            abort(make_response(jsonify(msg="Record not found"), 404))
+            raise CRUDError("Record not found", 404)
         return record
 
     def validate_required_fields(self, data):
         missing_fields = [field for field in self.required_fields if field not in data]
 
         if missing_fields:
-            abort(make_response(jsonify(msg=f"Missing required fields: {', '.join(missing_fields)}"), 400))
+            raise CRUDError(f"Missing required fields: {', '.join(missing_fields)}", 400)
 
     def get_pagination_info(self):
         page = request.args.get('page', 1, type=int)
@@ -86,7 +96,7 @@ class CRUDView(MethodView):
     def apply_search_filters(self, query):
         search = request.args.get('search')
         if search:
-            filters = [getattr(self.model, field).like(bindparam('search')).params(search=f'%{search}%') for field in self.search_fields]
+            filters = [getattr(self.model, field).like(f'%{search}%') for field in self.search_fields]
             query = query.filter(or_(*filters))
         return query
 
@@ -99,11 +109,12 @@ class CRUDView(MethodView):
 
     def apply_sorting(self, query):
         sort_by = request.args.get('sort_by', 'id_desc')
+        sort_values = sort_by.split(',')
 
         for field, column in self.sort_fields.items():
-            if f"{field}_asc" in sort_by:
+            if f"{field}_asc" in sort_values:
                 query = query.order_by(column.asc())
-            elif f"{field}_desc" in sort_by:
+            elif f"{field}_desc" in sort_values:
                 query = query.order_by(column.desc())
         return query
 
@@ -119,7 +130,7 @@ class CRUDView(MethodView):
                 try:
                     parsed_data[field] = self.field_parsers[field](value)
                 except Exception as e:
-                    abort(make_response(jsonify(msg=str(e)), 400))
+                    raise CRUDError(str(e), 400)
             else:
                 parsed_data[field] = value
 
@@ -133,10 +144,10 @@ class CRUDView(MethodView):
                     break
 
             if python_type is None:
-                abort(make_response(jsonify(msg=f"Type mapping not found for field '{field}'"), 400))
+                raise CRUDError(f"Type mapping not found for field '{field}'", 400)
 
             if not isinstance(parsed_data[field], python_type):
-                abort(make_response(jsonify(msg=f"Invalid type for field '{field}'"), 400))
+                raise CRUDError(f"Invalid type for field '{field}'", 400)
 
         return parsed_data
 
@@ -235,7 +246,10 @@ class CRUDView(MethodView):
 
     def dispatch_request(self, *args, **kwargs):
         self.before_request(*args, **kwargs)
-        response = super().dispatch_request(**kwargs)
+        try:
+            response = super().dispatch_request(**kwargs)
+        except CRUDError as e:
+            response = e.to_response()
         return self.after_request(response, *args, **kwargs)
 
     def before_create(self, data):

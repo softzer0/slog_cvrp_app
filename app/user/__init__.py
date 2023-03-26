@@ -115,20 +115,23 @@ def reset_password_send():
 @user_bp.route('/settings', methods=['PUT'])
 @jwt_required()
 def update_user_settings():
-    depot_addr_id = request.json.get('depot_addr_id')
-    if isinstance(depot_addr_id, int):
-        if not db.session.query(exists(select(Address.id).outerjoin(Point)).where((Address.user_id == current_user.id) & (Address.id == depot_addr_id) & (Point.id == None))).scalar():
-            return jsonify({'msg': "Address not found"}), 404
+    if 'depot_addr_id' in request.json:
+        depot_addr_id = request.json['depot_addr_id']
+        if isinstance(depot_addr_id, int):
+            if not db.session.query(exists(select(Address.id).outerjoin(Point)).where((Address.user_id == current_user.id) & (Address.id == depot_addr_id) & (Point.id == None))).scalar():
+                return jsonify({'msg': "Unassigned address not found"}), 404
+        else:
+            return jsonify({'msg': "Invalid value for depot address ID"}), 404
         current_user.depot_addr_id = depot_addr_id
     if 'max_capacity' in request.json:
         max_capacity = request.json['max_capacity']
-        if max_capacity < 1:
-            return jsonify({'msg': 'Max capacity must be greater than 0'}), 400
+        if not isinstance(max_capacity, int) or max_capacity < 1:
+            return jsonify({'msg': "Max capacity must be a number greater than 0"}), 400
         current_user.max_capacity = max_capacity
     if 'send_routes_to_employees' in request.json:
         send_routes_to_employees = request.json['send_routes_to_employees']
         if not isinstance(send_routes_to_employees, bool):
-            return jsonify({'msg': 'send_routes_to_employees must be a boolean value'}), 400
+            return jsonify({'msg': "'send_routes_to_employees' must be a boolean value"}), 400
         current_user.send_routes_to_employees = send_routes_to_employees
     try:
         db.session.commit()
