@@ -1,0 +1,22 @@
+<body>
+    <p>
+    You've just got the following route assigned to you:
+    <ol>
+        {% for point in points %}
+        <li>{{ point.address.address }}</li>
+        {% endfor %}
+    </ol>
+    </p>
+    <p>
+    You can view it on the following link:
+    <br>
+    <a href="{{ link }}">{{ link }}</a>
+    </p>
+    <p>
+    Duration: {{ duration }}
+    <br>
+    Distance: {{ distance }} km
+    </p>
+    <br>
+    <p><strong>Solve Logistics</strong></p>
+</body>

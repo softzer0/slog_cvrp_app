@@ -1,12 +1,14 @@
+from datetime import timedelta
 from functools import wraps
 from io import TextIOWrapper, StringIO
 from csv import Sniffer, DictReader
 from dateutil.parser import parse
 
-from flask import Blueprint, request, make_response, jsonify, abort
+from flask import Blueprint, request, make_response, jsonify, abort, render_template, current_app
 from flask_jwt_extended import jwt_required, current_user
+from flask_mail import Message
 
-from ..project import redis_client, db
+from ..project import redis_client, mail
 from .common import check_if_import_status, check_if_execution_status, get_execution_key, create_status_object, \
     save_import_status, save_execution_status, get_unassigned_addresses
 from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP, prepare_and_run_TSP
@@ -15,7 +17,7 @@ from .schemas import RouteSchema, EmployeeSchema, AddressSchema, VehicleSchema
 from .models import Address, Employee, Route, Point, Vehicle
 from ..project.utils import get_bool_request_arg
 
-core_bp = Blueprint('core', __name__)
+core_bp = Blueprint('core', __name__, template_folder='templates')
 
 def return_err_if_in_progress(fn, check_f, msg):
     @wraps(fn)
@@ -138,6 +140,18 @@ class RouteCRUDView(CRUDView):
             }
         )
 
+    def _send_email_if_employee_assigned(self, record, employee=None):
+        if not employee:
+            if not record.employee_id:
+                return
+            employee = Employee.query.get(record.employee_id)
+        if not employee.email:
+            return
+
+        msg = Message("New Route Assigned", sender=current_app.config['MAIL_USERNAME'], recipients=[employee.email])
+        msg.html = render_template('route.html', points=record.points, link=record.link, duration=str(timedelta(seconds=record.duration)), distance=record.distance)
+        mail.send(msg)
+
     def after_update(self, record, original_record):
         if record.employee_id != original_record.employee_id:
             if record.employee_id:
@@ -145,6 +159,7 @@ class RouteCRUDView(CRUDView):
                 if new_employee:
                     new_employee.work_hours += round(record.duration / 3600)
                     new_employee.version += 1
+                    self._send_email_if_employee_assigned(record, new_employee)
 
             if original_record.employee_id:
                 old_employee = Employee.query.filter_by(id=original_record.employee_id).first()

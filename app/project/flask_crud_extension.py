@@ -1,11 +1,11 @@
 import datetime
+from inspect import signature
 
 from flask import request, jsonify, make_response, Blueprint, current_app
 from flask.views import MethodView
 from flask_jwt_extended import current_user, jwt_required
 from marshmallow import Schema, fields
-from sqlalchemy import inspect, or_, String, Integer, Float, Boolean, DateTime, Date
-from sqlalchemy.orm import make_transient
+from sqlalchemy import inspect as sqla_inspect, or_, String, Integer, Float, Boolean, DateTime, Date
 from sqlalchemy.orm.exc import StaleDataError
 
 from . import db
@@ -19,6 +19,60 @@ type_mapping = {
     DateTime: datetime.datetime,
     Date: datetime.date,
 }
+
+
+def clone_sqlalchemy_object(obj, ignore_columns=None, visited_objects=None):
+    if ignore_columns is None:
+        ignore_columns = []
+
+    if visited_objects is None:
+        visited_objects = {}
+
+    # Check if the object has already been visited (to avoid infinite recursion in self-referential relationships)
+    if id(obj) in visited_objects:
+        return visited_objects[id(obj)]
+
+    obj_dict = obj.__dict__.copy()
+    obj_dict.pop('_sa_instance_state', None)
+
+    for column in ignore_columns:
+        obj_dict.pop(column, None)
+
+    # Get the list of arguments for the __init__ method
+    init_params = signature(type(obj).__init__).parameters
+
+    # Prepare a dictionary with only the matching arguments from the record
+    init_args = {k: v for k, v in obj_dict.items() if k in init_params and k not in ignore_columns}
+
+    new_obj = type(obj)(**init_args)
+    visited_objects[id(obj)] = new_obj
+
+    mapper = sqla_inspect(type(obj))
+
+    # Copy foreign keys and primary keys at the root level
+    for column in mapper.columns:
+        if (column.foreign_keys or column.primary_key) and column.key not in ignore_columns:
+            setattr(new_obj, column.key, getattr(obj, column.key))
+
+    # Duplicate related objects
+    for name, rel in mapper.relationships.items():
+        related_objects = getattr(obj, name)
+
+        if rel.uselist:
+            duplicated_related_objects = [clone_sqlalchemy_object(obj, ignore_columns, visited_objects) for obj in related_objects]
+            setattr(new_obj, name, duplicated_related_objects)
+        elif related_objects is not None:
+            duplicated_related_object = clone_sqlalchemy_object(related_objects, ignore_columns, visited_objects)
+            setattr(new_obj, name, duplicated_related_object)
+
+        # Handle many-to-many relationships and back_populates
+        if rel.back_populates:
+            for obj in related_objects:
+                back_related_objects = getattr(obj, rel.back_populates)
+                if new_obj not in back_related_objects:
+                    back_related_objects.append(new_obj)
+
+    return new_obj
 
 
 class CRUDError(Exception):
@@ -48,7 +102,7 @@ class CRUDView(MethodView):
                  pagination_schema=PaginationSchema):
         self.model = model
         self.schema = schema
-        self.editable_fields = editable_fields or inspect(self.model).columns.keys()
+        self.editable_fields = editable_fields or sqla_inspect(self.model).columns.keys()
         self.required_fields = required_fields or self._get_required_fields()
         self._all_fields = self.editable_fields + self.required_fields
         self._query = query
@@ -71,7 +125,7 @@ class CRUDView(MethodView):
 
     def _get_required_fields(self):
         required_fields = []
-        for column in inspect(self.model).columns:
+        for column in sqla_inspect(self.model).columns:
             if not column.nullable and not column.primary_key:
                 required_fields.append(column.name)
         return required_fields
@@ -126,6 +180,10 @@ class CRUDView(MethodView):
     def parse_and_validate_data(self, data):
         parsed_data = {}
         for field, value in data.items():
+            if field not in self.required_fields and not data[field]:
+                parsed_data[field] = None
+                continue
+
             if field in self.field_parsers:
                 try:
                     parsed_data[field] = self.field_parsers[field](value)
@@ -196,12 +254,11 @@ class CRUDView(MethodView):
             self.after_create(record)
             return self.schema().dump(record), 201
         except Exception as e:
-            return jsonify({'msg': str(e)}), 400
+            raise CRUDError(str(e), 400)
 
     def _perform_before_update(self, record, data):
         # Create a new SQLAlchemy object that is a copy of the original record
-        original_record = db.session.merge(record, load=False)
-        make_transient(original_record)
+        original_record = clone_sqlalchemy_object(record)
 
         self.before_update(record, data)
         return original_record
@@ -210,13 +267,14 @@ class CRUDView(MethodView):
     def put(self, record_id):
         data = request.get_json()
         record = self.get_record_by_id(record_id)
-        data = self.parse_and_validate_data(data)
-        original_record = self._perform_before_update(record, data)
-        for field in self.editable_fields:
-            if field in data:
-                setattr(record, field, data[field])
+
         while True:
             try:
+                data = self.parse_and_validate_data(data)
+                original_record = self._perform_before_update(record, data)
+                for field in self.editable_fields:
+                    if field in data:
+                        setattr(record, field, data[field])
                 self.after_update(record, original_record)
                 db.session.commit()
                 break
@@ -224,10 +282,9 @@ class CRUDView(MethodView):
                 # In case of a conflict, reload the records and retry the update
                 db.session.rollback()
                 db.session.refresh(record)
-                db.session.refresh(original_record)
             except Exception as e:
-                return jsonify({'msg': str(e)}), 400
-            return self.schema().dump(record)
+                raise CRUDError(str(e), 400)
+        return self.schema().dump(record)
 
     @jwt_required()
     def delete(self, record_id):
