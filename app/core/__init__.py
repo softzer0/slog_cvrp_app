@@ -4,18 +4,17 @@ from io import TextIOWrapper, StringIO
 from csv import Sniffer, DictReader
 from dateutil.parser import parse
 
-from flask import Blueprint, request, make_response, jsonify, abort, render_template, current_app
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, current_user
-from flask_mail import Message
 
-from ..project import redis_client, mail
+from ..project import redis_client, db
 from .common import check_if_import_status, check_if_execution_status, get_execution_key, create_status_object, \
     save_import_status, save_execution_status, get_unassigned_addresses
 from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP, prepare_and_run_TSP
-from ..project.flask_crud_extension import register_crud_routes, CRUDView
+from ..project.flask_crud_extension import register_crud_routes, CRUDView, CRUDError
 from .schemas import RouteSchema, EmployeeSchema, AddressSchema, VehicleSchema
 from .models import Address, Employee, Route, Point, Vehicle
-from ..project.utils import get_bool_request_arg
+from ..project.utils import get_bool_request_arg, send_email
 
 core_bp = Blueprint('core', __name__, template_folder='templates')
 
@@ -97,9 +96,8 @@ register_crud_routes(
     core_bp,
     model=Employee,
     schema=EmployeeSchema,
-    editable_fields=['first_name', 'last_name', 'email', 'work_hours'],
+    editable_fields=['first_name', 'last_name', 'email', 'work_hours', 'allocated_hours'],
     search_fields=['first_name', 'last_name', 'email'],
-    filter_fields=['work_hours'],
     sort_fields=['id', 'work_hours'],
 )
 
@@ -107,7 +105,7 @@ register_crud_routes(
     core_bp,
     model=Vehicle,
     schema=VehicleSchema,
-    editable_fields=['name', 'reg_plates', 'mileage'],
+    editable_fields=['name', 'reg_plates', 'mileage', 'allocated_km'],
     search_fields=['name', 'reg_plates'],
     sort_fields=['id', 'mileage'],
 )
@@ -123,7 +121,7 @@ def date_range_filter(query):
                 (Route.done_date <= parse(to_done_time))
             )
         except ValueError as e:
-            abort(make_response(jsonify(msg=str(e)), 400))
+            raise CRUDError(e, 400)
     return query
 
 class RouteCRUDView(CRUDView):
@@ -136,7 +134,7 @@ class RouteCRUDView(CRUDView):
             sort_fields=['id', 'done_date'],
             custom_filters=[date_range_filter],
             field_parsers={
-                'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None),
+                'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None) if value is not None else None,
             }
         )
 
@@ -148,36 +146,53 @@ class RouteCRUDView(CRUDView):
         if not employee.email:
             return
 
-        msg = Message("New Route Assigned", sender=current_app.config['MAIL_USERNAME'], recipients=[employee.email])
-        msg.html = render_template('route.html', points=record.points, link=record.link, duration=str(timedelta(seconds=record.duration)), distance=record.distance)
-        mail.send(msg)
+        send_email([employee.email], "New Route Assigned", 'route.html', route_id=record.id, points=record.points, link=record.link,
+                   duration=str(timedelta(seconds=record.duration)), distance=round(record.distance, 1))
+
+    def _update_employee(self, employee, duration=None, no_allocate=False, to_work_hours=None):
+        if to_work_hours or no_allocate:
+            employee.work_hours += to_work_hours or duration
+        if to_work_hours or not no_allocate:
+            employee.allocated_hours += duration
+        employee.version += 1
+
+    def _update_vehicle(self, vehicle, distance, no_allocate=False, to_mileage=None):
+        if to_mileage or no_allocate:
+            vehicle.mileage += to_mileage or distance
+        if to_mileage or not no_allocate:
+            vehicle.allocated_km += distance
+        vehicle.version += 1
 
     def after_update(self, record, original_record):
+        is_done = bool(record.done_date)
+        is_done_orig = bool(original_record.done_date)
+        is_done_changed = (1 if is_done else -1) if is_done != is_done_orig else None
+
         if record.employee_id != original_record.employee_id:
             if record.employee_id:
                 new_employee = Employee.query.filter_by(user_id=current_user.id, id=record.employee_id).first()
                 if new_employee:
-                    new_employee.work_hours += round(record.duration / 3600)
-                    new_employee.version += 1
+                    self._update_employee(new_employee, record.duration, is_done)
                     self._send_email_if_employee_assigned(record, new_employee)
 
             if original_record.employee_id:
-                old_employee = Employee.query.filter_by(id=original_record.employee_id).first()
-                if old_employee:
-                    old_employee.work_hours -= round(original_record.duration / 3600)
-                    old_employee.version += 1
+                self._update_employee(db.session.get(Employee, original_record.employee_id), -original_record.duration, is_done_orig)
+
+        elif record.employee_id and is_done_changed is not None:
+            value = record.duration * is_done_changed
+            self._update_employee(record.employee, -value, to_work_hours=value)
 
         if record.vehicle_id != original_record.vehicle_id:
             if record.vehicle_id:
                 new_vehicle = Vehicle.query.filter_by(user_id=current_user.id, id=record.vehicle_id).first()
                 if new_vehicle:
-                    new_vehicle.mileage += record.distance
-                    new_vehicle.version += 1
+                    self._update_vehicle(new_vehicle, record.distance, is_done)
 
             if original_record.vehicle_id:
-                old_vehicle = Vehicle.query.filter_by(id=original_record.vehicle_id).first()
-                if old_vehicle:
-                    old_vehicle.mileage -= original_record.distance
-                    old_vehicle.version += 1
+                self._update_vehicle(db.session.get(Vehicle, original_record.vehicle_id), -original_record.distance, is_done_orig)
+
+        elif record.vehicle_id and is_done_changed is not None:
+            value = record.distance * is_done_changed
+            self._update_vehicle(record.vehicle_id, -value, to_mileage=value)
 
 register_crud_routes(core_bp, model=Route, view_class=RouteCRUDView)

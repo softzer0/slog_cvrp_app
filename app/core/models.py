@@ -48,6 +48,7 @@ class Employee(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(128), unique=True)
     work_hours = db.Column(db.Integer, nullable=False)
+    allocated_hours = db.Column(db.Integer, nullable=False, default=0)
 
 class Vehicle(db.Model):
     __tablename__ = 'vehicles'
@@ -57,7 +58,8 @@ class Vehicle(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', onupdate='CASCADE', ondelete='CASCADE'))
     name = db.Column(db.String(50), nullable=False)
     reg_plates = db.Column(db.String(15), unique=True, nullable=False)
-    mileage = db.Column(db.Integer, nullable=False)
+    mileage = db.Column(db.Float, nullable=False)
+    allocated_km = db.Column(db.Float, nullable=False, default=0)
 
 class Route(db.Model):
     __tablename__ = 'routes'
@@ -72,6 +74,8 @@ class Route(db.Model):
     distance = db.Column(db.Integer)
 
     points = db.relationship('Point', cascade='save-update, delete-orphan, merge, delete')
+    employee = db.relationship('Employee', foreign_keys='Route.employee_id')
+    vehicle = db.relationship('Vehicle', foreign_keys='Route.vehicle_id')
 
     def __init__(self, user_id, link=None, duration=None, distance=None):
         self.user_id = user_id
@@ -80,7 +84,7 @@ class Route(db.Model):
         self.distance = distance
 
     def __repr__(self):
-        return f'''<Route for user ID: {self.user_id}{', done @ '+self.done_date.isoformat() if self.done else ''}>'''
+        return f'''<Route for user ID: {self.user_id}{', done @ '+self.done_date.isoformat() if self.done_date else ''}>'''
 
 class Point(db.Model):
     __tablename__ = 'points'

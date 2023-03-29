@@ -7,10 +7,12 @@ from ..project.common import DefaultSQLAlchemyAutoSchema
 class EmployeeSchema(DefaultSQLAlchemyAutoSchema):
     class Meta:
         model = Employee
+        exclude = ('version',)
 
 class VehicleSchema(DefaultSQLAlchemyAutoSchema):
     class Meta:
         model = Vehicle
+        exclude = ('version',)
 
 class AddressSchema(DefaultSQLAlchemyAutoSchema):
     class Meta:

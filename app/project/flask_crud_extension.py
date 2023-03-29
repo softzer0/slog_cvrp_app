@@ -49,9 +49,9 @@ def clone_sqlalchemy_object(obj, ignore_columns=None, visited_objects=None):
 
     mapper = sqla_inspect(type(obj))
 
-    # Copy foreign keys and primary keys at the root level
+    # Copy all columns at the root level, except the ones which are being ignored
     for column in mapper.columns:
-        if (column.foreign_keys or column.primary_key) and column.key not in ignore_columns:
+        if column.key not in ignore_columns:
             setattr(new_obj, column.key, getattr(obj, column.key))
 
     # Duplicate related objects
@@ -76,9 +76,15 @@ def clone_sqlalchemy_object(obj, ignore_columns=None, visited_objects=None):
 
 
 class CRUDError(Exception):
-    def __init__(self, message, status_code):
-        super().__init__(message)
-        self.message = message
+    def __init__(self, exc, status_code):
+        if hasattr(exc, 'orig'):
+            self.message = "Database error"  # exc.orig.diag.message_primary
+            if exc.orig.diag.message_detail:
+                self.message += f': {exc.orig.diag.message_detail}'
+            if exc.orig.diag.message_hint:
+                self.message += f' ({exc.orig.diag.message_hint})'
+        else:
+            self.message = str(exc)
         self.status_code = status_code
 
     def to_response(self):
@@ -126,7 +132,7 @@ class CRUDView(MethodView):
     def _get_required_fields(self):
         required_fields = []
         for column in sqla_inspect(self.model).columns:
-            if not column.nullable and not column.primary_key:
+            if not column.nullable and not column.default and not column.primary_key:
                 required_fields.append(column.name)
         return required_fields
 
@@ -180,15 +186,11 @@ class CRUDView(MethodView):
     def parse_and_validate_data(self, data):
         parsed_data = {}
         for field, value in data.items():
-            if field not in self.required_fields and not data[field]:
-                parsed_data[field] = None
-                continue
-
             if field in self.field_parsers:
                 try:
                     parsed_data[field] = self.field_parsers[field](value)
                 except Exception as e:
-                    raise CRUDError(str(e), 400)
+                    raise CRUDError(e, 400)
             else:
                 parsed_data[field] = value
 
@@ -204,7 +206,7 @@ class CRUDView(MethodView):
             if python_type is None:
                 raise CRUDError(f"Type mapping not found for field '{field}'", 400)
 
-            if not isinstance(parsed_data[field], python_type):
+            if parsed_data[field] is None and field in self.required_fields or parsed_data[field] is not None and not isinstance(parsed_data[field], python_type):
                 raise CRUDError(f"Invalid type for field '{field}'", 400)
 
         return parsed_data
@@ -254,7 +256,7 @@ class CRUDView(MethodView):
             self.after_create(record)
             return self.schema().dump(record), 201
         except Exception as e:
-            raise CRUDError(str(e), 400)
+            raise CRUDError(e, 400)
 
     def _perform_before_update(self, record, data):
         # Create a new SQLAlchemy object that is a copy of the original record
@@ -283,7 +285,7 @@ class CRUDView(MethodView):
                 db.session.rollback()
                 db.session.refresh(record)
             except Exception as e:
-                raise CRUDError(str(e), 400)
+                raise CRUDError(e, 400)
         return self.schema().dump(record)
 
     @jwt_required()

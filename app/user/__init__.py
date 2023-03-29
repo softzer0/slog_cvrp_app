@@ -1,6 +1,5 @@
-from flask import request, Blueprint, current_app, render_template, make_response, jsonify, abort
+from flask import request, Blueprint, current_app, make_response, jsonify, abort
 from flask_jwt_extended import create_access_token, jwt_required, current_user, create_refresh_token, get_jwt_identity
-from flask_mail import Message
 from itsdangerous import TimestampSigner
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
@@ -9,7 +8,8 @@ from datetime import datetime
 from .models import User
 from .schemas import UserSchema
 from ..core.models import Address, Point
-from ..project.common import mail, db
+from ..project.common import db
+from ..project.utils import send_email
 
 user_bp = Blueprint('user', __name__, template_folder='templates')
 
@@ -47,10 +47,8 @@ def me():
 
 
 def send_reset_password_mail(email, id):
-    msg = Message("Password reset", sender=current_app.config['NO_REPLY_EMAIL'], recipients=[email])
     signer = TimestampSigner(current_app.config['SECRET_KEY'])
-    msg.html = render_template('reset-password.html', token=signer.sign(str(id)).decode())
-    mail.send(msg)
+    send_email([email], "Password reset", 'reset-password.html', token=signer.sign(str(id)).decode())
 
 @user_bp.route('/create-user', methods=['POST'])
 @jwt_required()

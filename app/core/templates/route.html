@@ -1,9 +1,9 @@
 <body>
     <p>
-    You've just got the following route assigned to you:
+    You've just got the following route #{{ route_id }} assigned to you:
     <ol>
         {% for point in points %}
-        <li>{{ point.address.address }}</li>
+        <li>{{ point.address.address }}{% if not loop.first and not loop.last %} - {{ point.address.capacity }}{% endif %}</li>
         {% endfor %}
     </ol>
     </p>
