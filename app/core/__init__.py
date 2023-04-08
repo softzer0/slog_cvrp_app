@@ -9,8 +9,9 @@ from flask_jwt_extended import jwt_required, current_user
 
 from ..project import redis_client, db
 from .common import check_if_import_status, check_if_execution_status, get_execution_key, create_status_object, \
-    save_import_status, save_execution_status, get_unassigned_addresses
-from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP, prepare_and_run_TSP
+    save_import_status, save_execution_status, get_unassigned_addresses, is_address_assigned
+from .tasks import TaskStatus, add_new_address, read_import_data, prepare_and_run_VRP, prepare_and_run_TSP, \
+    unassigned_address_w_coords_exists
 from ..project.flask_crud_extension import register_crud_routes, CRUDView, CRUDError
 from .schemas import RouteSchema, EmployeeSchema, AddressSchema, VehicleSchema
 from .models import Address, Employee, Route, Point, Vehicle
@@ -149,7 +150,7 @@ class RouteCRUDView(CRUDView):
         send_email([employee.email], "New Route Assigned", 'route.html', route_id=record.id, points=record.points, link=record.link,
                    duration=str(timedelta(seconds=record.duration)), distance=round(record.distance, 1))
 
-    def _update_employee(self, employee, duration=None, no_allocate=False, to_work_hours=None):
+    def _update_employee(self, employee, duration, no_allocate=False, to_work_hours=None):
         if to_work_hours or no_allocate:
             employee.work_hours += to_work_hours or duration
         if to_work_hours or not no_allocate:
@@ -194,5 +195,17 @@ class RouteCRUDView(CRUDView):
         elif record.vehicle_id and is_done_changed is not None:
             value = record.distance * is_done_changed
             self._update_vehicle(record.vehicle_id, -value, to_mileage=value)
+
+    def after_delete(self, record):
+        if record.employee:
+            self._update_employee(record.employee, -record.duration, bool(record.done_date))
+        if record.vehicle:
+            self._update_vehicle(record.vehicle, -record.distance, bool(record.done_date))
+        for point in record.points[1:-1]:
+            if unassigned_address_w_coords_exists(current_user.id, point.address.coords):
+                db.session.delete(point.address)
+        if not is_address_assigned(current_user.id, record.points[0].address.id) and \
+                unassigned_address_w_coords_exists(current_user.id, record.points[0].address.coords):
+            db.session.delete(record.points[0].address)
 
 register_crud_routes(core_bp, model=Route, view_class=RouteCRUDView)

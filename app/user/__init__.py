@@ -1,13 +1,12 @@
 from flask import request, Blueprint, current_app, make_response, jsonify, abort
 from flask_jwt_extended import create_access_token, jwt_required, current_user, create_refresh_token, get_jwt_identity
 from itsdangerous import TimestampSigner
-from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
 from .models import User
 from .schemas import UserSchema
-from ..core.models import Address, Point
+from ..core.common import is_address_assigned
 from ..project.common import db
 from ..project.utils import send_email
 
@@ -116,7 +115,7 @@ def update_user_settings():
     if 'depot_addr_id' in request.json:
         depot_addr_id = request.json['depot_addr_id']
         if isinstance(depot_addr_id, int):
-            if not db.session.query(exists(select(Address.id).outerjoin(Point)).where((Address.user_id == current_user.id) & (Address.id == depot_addr_id) & (Point.id == None))).scalar():
+            if is_address_assigned(current_user.id, depot_addr_id):
                 return jsonify({'msg': "Unassigned address not found"}), 404
         else:
             return jsonify({'msg': "Invalid value for depot address ID"}), 404

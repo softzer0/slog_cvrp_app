@@ -136,8 +136,11 @@ class CRUDView(MethodView):
                 required_fields.append(column.name)
         return required_fields
 
-    def get_record_by_id(self, record_id):
-        record = self.query.filter(self.model.id == record_id).first()
+    def get_single_record(self, record_id):
+        return self.query.filter(self.model.id == record_id)
+
+    def _get_record_by_id(self, record_id):
+        record = self.get_single_record(record_id).first()
         if not record:
             raise CRUDError("Record not found", 404)
         return record
@@ -215,7 +218,7 @@ class CRUDView(MethodView):
     def get(self, record_id=None):
         if record_id is not None:
             # Get single record
-            record = self.get_record_by_id(record_id)
+            record = self._get_record_by_id(record_id)
             self.before_get_single(record)
             response = self.schema().dump(record)
             self.after_get_single(record)
@@ -268,7 +271,7 @@ class CRUDView(MethodView):
     @jwt_required()
     def put(self, record_id):
         data = request.get_json()
-        record = self.get_record_by_id(record_id)
+        record = self._get_record_by_id(record_id)
 
         while True:
             try:
@@ -290,11 +293,11 @@ class CRUDView(MethodView):
 
     @jwt_required()
     def delete(self, record_id):
-        record = self.get_record_by_id(record_id)
+        record = self._get_record_by_id(record_id)
         self.before_delete(record)
         db.session.delete(record)
-        db.session.commit()
         self.after_delete(record)
+        db.session.commit()
         return jsonify({'msg': f"{self.model.__name__} deleted successfully"})
 
     def before_request(self, *args, **kwargs):

@@ -1,7 +1,9 @@
 import json
 
+from sqlalchemy import exists, select
+
 from .models import Address, Point
-from ..project import redis_client
+from ..project import redis_client, db
 
 get_import_key = lambda user_id: f'import-{user_id}'
 get_execution_key = lambda user_id: f'execution-{user_id}'
@@ -33,3 +35,7 @@ def check_if_execution_status(user_id, status):
 
 def get_unassigned_addresses(user_id):
     return Address.query.outerjoin(Point).filter((Address.user_id == user_id) & (Point.address_id.is_(None)))
+
+def is_address_assigned(user_id, address_id):
+    return db.session.query(exists(select(Address.id).outerjoin(Point)).where((Address.user_id == user_id) &
+        (Address.id == address_id) & (Point.id.isnot(None)))).scalar()

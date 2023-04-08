@@ -2,6 +2,7 @@ from enum import Enum
 from os import environ
 
 from requests import get as requests_get
+from sqlalchemy import exists, select
 
 from .common import save_import_status, save_execution_status
 from .engine.common import prepare_w_matrix, get_depot_and_genes
@@ -18,14 +19,20 @@ class TaskStatus(Enum):
     DONE = 'done'
     ERROR = 'error'
 
+def unassigned_address_w_coords_exists(user_id, coords):
+    return db.session.query(exists(select(Address.id).outerjoin(Point)).where((Address.user_id == user_id) & (Address.coords == coords) & (Point.id == None))).scalar()
+
 def add_new_address(user_id, address, capacity):
     response = requests_get('https://nominatim.openstreetmap.org/search/' + address + '?format=json').json()
     if not len(response):
         raise Exception("Given address doesn't exist")
+    coords = response[0]['lat'] + ',' + response[0]['lon']
+    if unassigned_address_w_coords_exists(user_id, coords):
+        raise Exception("Unassigned address with the same coordinates already exists")
     address = Address(
         user_id=user_id,
         address=address,
-        coords=f'''{response[0]['lat']},{response[0]['lon']}''',
+        coords=coords,
         capacity=capacity
     )
     db.session.add(address)
