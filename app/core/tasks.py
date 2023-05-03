@@ -59,21 +59,26 @@ def add_new_route(user_id, points, nodes, link, duration, distance):
         point = Point(route.id, nodes[p][0], i+1)
         db.session.add(point)
 
+def _get_route(coords):
+    res = requests_get(f'''https://api.mapbox.com/directions/v5/mapbox/driving/{';'.join(coords)}?access_token={MAPBOX_API_KEY}''').json()
+    return res['routes'][0]['duration'], res['routes'][0]['distance'] / 1000
+
 def create_link_and_add_route(user_id, res, coords, nodes):
-    coordinates_string = ''
+    coords_lst = []
     link = 'https://s-log-directions.vercel.app/?depot='
     for i, p in enumerate(res):
         coords_txt = f'{coords[p][0]},{coords[p][1]}'
-        coordinates_string += ';' + coords_txt
+        coords_lst.append(coords_txt)
         if i < len(res) - 1:
             if i > 0:
                 link += f'&point_{i}='
             link += coords_txt
             if i > 0:
                 link += f',{nodes[p][1]}'
-    response = requests_get('https://api.mapbox.com/directions/v5/mapbox/driving/' + coordinates_string[1:] + '?access_token=' + MAPBOX_API_KEY).json()
-    r = response['routes'][0]
-    add_new_route(user_id, res, nodes, link, r['duration'], r['distance'] / 1000)
+    route_results = [_get_route(chunk) for chunk in (coords_lst[i:i + 25] for i in range(0, len(coords_lst) - 1, 24))]
+    total_duration = sum(duration for duration, _ in route_results)
+    total_distance = sum(distance for _, distance in route_results)
+    add_new_route(user_id, res, nodes, link, total_duration, total_distance)
 
 VRP_INSTANCES = 2
 @celery.task()
@@ -93,7 +98,12 @@ def prepare_and_run_TSP(user_id, depot_addr_id):
     try:
         coords, matrix, nodes = prepare_w_matrix(user_id, depot_addr_id)
         depot, genes = get_depot_and_genes(nodes)
-        create_link_and_add_route(user_id, Tabu(matrix, depot).execute(genes, 1000), nodes, coords)
+        genes.append(depot)
+        tabu = Tabu(matrix, depot)
+        solution, _ = tabu.execute(genes, 1000)
+        solution = tabu.reorder_solution(genes, solution)
+        depot_ind = [genes.index(depot)]
+        create_link_and_add_route(user_id, depot_ind + solution + depot_ind, coords, nodes)
         db.session.commit()
         save_execution_status(user_id, TaskStatus.DONE)
     except Exception as e:

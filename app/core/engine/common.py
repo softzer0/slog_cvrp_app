@@ -9,6 +9,8 @@ def get_depot_and_genes(nodes):
 
 def prepare_w_matrix(user_id, depot_addr_id):
     addresses = get_unassigned_addresses(user_id).all()
+    if len(addresses) < 3:
+        raise Exception("Not enough available addresses")
     coords = []
     nodes = []
     depot_coords = None

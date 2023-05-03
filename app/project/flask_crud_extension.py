@@ -209,7 +209,12 @@ class CRUDView(MethodView):
             if python_type is None:
                 raise CRUDError(f"Type mapping not found for field '{field}'", 400)
 
-            if parsed_data[field] is None and field in self.required_fields or parsed_data[field] is not None and not isinstance(parsed_data[field], python_type):
+            is_float_py_type = python_type is float
+            is_int_type = isinstance(parsed_data[field], int)
+
+            if (parsed_data[field] is None and field in self.required_fields) or \
+                    (parsed_data[field] is not None and not isinstance(parsed_data[field], python_type) and not (
+                            is_float_py_type and is_int_type)):
                 raise CRUDError(f"Invalid type for field '{field}'", 400)
 
         return parsed_data

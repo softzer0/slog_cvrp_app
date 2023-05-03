@@ -196,7 +196,7 @@ class RouteCRUDView(CRUDView):
             value = record.distance * is_done_changed
             self._update_vehicle(record.vehicle_id, -value, to_mileage=value)
 
-    def after_delete(self, record):
+    def before_delete(self, record):
         if record.employee:
             self._update_employee(record.employee, -record.duration, bool(record.done_date))
         if record.vehicle:
