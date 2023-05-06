@@ -125,6 +125,15 @@ def date_range_filter(query):
             raise CRUDError(e, 400)
     return query
 
+def is_assigned_filter(query):
+    is_assigned = get_bool_request_arg(request, 'is_assigned', is_switch=True)
+
+    if is_assigned:
+        query = query.filter((Route.employee_id.isnot(None)) | (Route.vehicle_id.isnot(None)))
+    elif is_assigned is False:
+        query = query.filter((Route.employee_id.is_(None)) & (Route.vehicle_id.is_(None)))
+    return query
+
 class RouteCRUDView(CRUDView):
     def __init__(self):
         super().__init__(
@@ -133,7 +142,7 @@ class RouteCRUDView(CRUDView):
             editable_fields=['employee_id', 'vehicle_id', 'done_date'],
             filter_fields=['employee_id', 'vehicle_id'],
             sort_fields=['id', 'done_date'],
-            custom_filters=[date_range_filter],
+            custom_filters=[date_range_filter, is_assigned_filter],
             field_parsers={
                 'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None) if value is not None else None,
             }

@@ -10,8 +10,10 @@ def send_email(recipients, subject, template, **kwargs):
     msg.html = render_template(template, **kwargs)
     mail.send(msg)
 
-def get_bool_request_arg(request, name, throw_if_not_found=False):
-    value = request.args.get(name, default='false' if not throw_if_not_found else None, type=str)
+def get_bool_request_arg(request, name, throw_if_not_found=False, is_switch=False):
+    value = request.args.get(name, default='false' if not throw_if_not_found and not is_switch else None, type=str)
     if not value:
-        abort(make_response(jsonify(msg=f"Required parameter '{name}' not provided"), 400))
-    return bool(strtobool(value))
+        if throw_if_not_found:
+            abort(make_response(jsonify(msg=f"Required parameter '{name}' not provided"), 400))
+    else:
+        return bool(strtobool(value))
