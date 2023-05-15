@@ -65,7 +65,7 @@ def _get_route(coords):
 
 def create_link_and_add_route(user_id, res, coords, nodes):
     coords_lst = []
-    link = 'https://s-log-directions.vercel.app/?depot='
+    link = 'https://extrat-coordinates.vercel.app/?depot='
     for i, p in enumerate(res):
         coords_txt = f'{coords[p][0]},{coords[p][1]}'
         coords_lst.append(coords_txt)

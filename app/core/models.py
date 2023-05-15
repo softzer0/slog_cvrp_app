@@ -69,7 +69,7 @@ class Route(db.Model):
     employee_id = db.Column(db.Integer, db.ForeignKey('employees.id', onupdate='CASCADE', ondelete='SET NULL'))
     vehicle_id = db.Column(db.Integer, db.ForeignKey('vehicles.id', onupdate='CASCADE', ondelete='SET NULL'))
     done_date = db.Column(db.DateTime)
-    link = db.Column(db.String(1500))
+    link = db.Column(db.Text)
     duration = db.Column(db.Integer)
     distance = db.Column(db.Integer)
 

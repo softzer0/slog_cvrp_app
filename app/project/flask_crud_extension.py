@@ -277,10 +277,10 @@ class CRUDView(MethodView):
     def put(self, record_id):
         data = request.get_json()
         record = self._get_record_by_id(record_id)
+        data = self.parse_and_validate_data(data)
 
         while True:
             try:
-                data = self.parse_and_validate_data(data)
                 original_record = self._perform_before_update(record, data)
                 for field in self.editable_fields:
                     if field in data:

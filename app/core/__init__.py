@@ -134,6 +134,15 @@ def is_assigned_filter(query):
         query = query.filter((Route.employee_id.is_(None)) & (Route.vehicle_id.is_(None)))
     return query
 
+def is_done_filter(query):
+    is_done = get_bool_request_arg(request, 'is_done', is_switch=True)
+
+    if is_done:
+        query = query.filter(Route.done_date.isnot(None))
+    elif is_done is False:
+        query = query.filter(Route.done_date.is_(None))
+    return query
+
 class RouteCRUDView(CRUDView):
     def __init__(self):
         super().__init__(
@@ -142,7 +151,7 @@ class RouteCRUDView(CRUDView):
             editable_fields=['employee_id', 'vehicle_id', 'done_date'],
             filter_fields=['employee_id', 'vehicle_id'],
             sort_fields=['id', 'done_date'],
-            custom_filters=[date_range_filter, is_assigned_filter],
+            custom_filters=[date_range_filter, is_assigned_filter, is_done_filter],
             field_parsers={
                 'done_date': lambda value: parse(value).replace(microsecond=0, tzinfo=None) if value is not None else None,
             }
@@ -180,10 +189,9 @@ class RouteCRUDView(CRUDView):
 
         if record.employee_id != original_record.employee_id:
             if record.employee_id:
-                new_employee = Employee.query.filter_by(user_id=current_user.id, id=record.employee_id).first()
-                if new_employee:
-                    self._update_employee(new_employee, record.duration, is_done)
-                    self._send_email_if_employee_assigned(record, new_employee)
+                new_employee = db.session.get(Employee, record.employee_id)
+                self._update_employee(new_employee, record.duration, is_done)
+                self._send_email_if_employee_assigned(record, new_employee)
 
             if original_record.employee_id:
                 self._update_employee(db.session.get(Employee, original_record.employee_id), -original_record.duration, is_done_orig)
@@ -194,16 +202,14 @@ class RouteCRUDView(CRUDView):
 
         if record.vehicle_id != original_record.vehicle_id:
             if record.vehicle_id:
-                new_vehicle = Vehicle.query.filter_by(user_id=current_user.id, id=record.vehicle_id).first()
-                if new_vehicle:
-                    self._update_vehicle(new_vehicle, record.distance, is_done)
+                self._update_vehicle(db.session.get(Vehicle, record.vehicle_id), record.distance, is_done)
 
             if original_record.vehicle_id:
                 self._update_vehicle(db.session.get(Vehicle, original_record.vehicle_id), -original_record.distance, is_done_orig)
 
         elif record.vehicle_id and is_done_changed is not None:
             value = record.distance * is_done_changed
-            self._update_vehicle(record.vehicle_id, -value, to_mileage=value)
+            self._update_vehicle(db.session.get(Vehicle, record.vehicle_id), -value, to_mileage=value)
 
     def before_delete(self, record):
         if record.employee:
